@@ -83,7 +83,7 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
                             if (data.type === "partial_response") {
                                 console.log("partial_response respopnse", data)
 
-                                if (typeof data.content === "string") {
+                                if (typeof data.value === "string") {
                                     newContent += data.value;
                                     setMessages((prev) =>
                                         prev.map((msg) =>
@@ -93,21 +93,21 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
                                         )
                                     );
                                 } else {
-                                    console.warn("[ChatStream] Missing or invalid content for partial_response", data);
+                                    console.warn("[ChatStream] Missing or invalid value for partial_response", data);
                                 }
                             } else if (data.type === "response") {
                                 console.log("full respopnse", data)
-                                if (typeof data.content === "string") {
-                                    setMessages((prev) =>
-                                        prev.map((msg) =>
-                                            msg.id === assistantMsg.id
-                                                ? {...msg, content: data.value, partial: false}
-                                                : msg
-                                        )
-                                    );
-                                } else {
-                                    console.warn("[ChatStream] Missing or invalid content for response", data);
-                                }
+if (typeof data.value === "string") {
+                                     setMessages((prev) =>
+                                         prev.map((msg) =>
+                                             msg.id === assistantMsg.id
+                                                 ? {...msg, content: data.value, partial: false}
+                                                 : msg
+                                         )
+                                     );
+                                 } else {
+                                     console.warn("[ChatStream] Missing or invalid value for response", data);
+                                 }
                             } else if (data.type === "suggestions") {
                                 setSuggestions(data.value || []);
                             }

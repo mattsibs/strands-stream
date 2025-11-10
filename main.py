@@ -6,7 +6,6 @@ from strands import Agent, tool
 from typing import AsyncGenerator
 
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -19,8 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files (for index.html)
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 import os
 from dotenv import load_dotenv
@@ -41,48 +38,59 @@ openai_model = OpenAIModel(
         "temperature": 0.7,
     }
 )
-# Sub-agent specialized in suggestions
+# Main agent for answering user prompts
+main_agent = Agent(
+    model=openai_model,
+    system_prompt="You are a helpful assistant. Answer the user's question clearly and concisely."
+)
+
+# Suggestion agent for generating follow-up questions
 suggestion_agent = Agent(
     model=openai_model,
     system_prompt="You are an expert at suggesting 3 relevant follow-up questions for a given answer. Return only the questions as a Python list of strings."
 )
 
-@tool
-def suggest_next_questions(answer: str) -> list:
-    """
-    Suggest 3 relevant follow-up questions based on the given answer.
-    """
-    result = ""
-    for event in suggestion_agent.stream(f"Suggest 3 relevant follow-up questions for: {answer}"):
-        if "data" in event:
-            result += event["data"]
-    try:
-        suggestions = eval(result)
-        if isinstance(suggestions, list):
-            return suggestions
-    except Exception:
-        pass
-    return [result]
-
-agent = Agent(model=openai_model, tools=[suggest_next_questions])
-
 async def stream_agent(prompt: str) -> AsyncGenerator[str, None]:
-    # Stream answer first, then suggestions
+    # 1. Call main_agent and stream partial responses
     answer = ""
-    async for event in agent.stream_async(prompt):
+    async for event in main_agent.stream_async(prompt):
         if "data" in event:
             answer += event["data"]
-            yield json.dumps({"data": event["data"]}) + "\n"
+            yield json.dumps({"type": "partial_response", "value": event["data"]}) + "\n"
         else:
-            print("[agent event]", event)
-    # After answer is complete, call the tool for suggestions
-    suggestions = agent.tools[0](answer)
-    yield json.dumps({"suggestions": suggestions}) + "\n"
+            print("[main_agent event]", event)
+    # 2. After answer is complete, send the full response
+    yield json.dumps({"type": "response", "value": answer}) + "\n"
+    # 3. Call suggestion_agent with the answer and stream suggestions
+    suggestions_text = ""
+    async for event in suggestion_agent.stream_async(f"Suggest 3 relevant follow-up questions for: {answer}"):
+        if "data" in event:
+            suggestions_text += event["data"]
+        else:
+            print("[suggestion_agent event]", event)
+    # Try to parse suggestions as a Python list
+    try:
+        suggestions = eval(suggestions_text)
+        if not isinstance(suggestions, list):
+            suggestions = [suggestions_text]
+    except Exception:
+        suggestions = [suggestions_text]
+    yield json.dumps({"type": "suggestions", "value": suggestions}) + "\n"
 
 @app.post("/stream")
 async def stream_endpoint(request: Request):
-    data = await request.json()
-    prompt = data["prompt"]
+    # Log headers
+    print("[FastAPI] Incoming headers:", dict(request.headers))
+    # Log raw body
+    raw_body = await request.body()
+    print("[FastAPI] Raw body:", raw_body)
+    try:
+        data = await request.json()
+        print("[FastAPI] Parsed JSON:", data)
+        prompt = data["prompt"]
+    except Exception as e:
+        print("[FastAPI] Error parsing JSON or missing 'prompt':", str(e))
+        return {"error": "Invalid request: must be JSON with a 'prompt' field."}, 400
     return StreamingResponse(stream_agent(prompt), media_type="application/json")
 
 if __name__ == "__main__":

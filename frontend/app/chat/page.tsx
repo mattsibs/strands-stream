@@ -41,6 +41,19 @@ function ChatInput() {
 
   return (
     <div className="w-full max-w-2xl mx-auto flex flex-col gap-2 pb-4">
+      {loading && suggestions.length === 0 && (
+        <div className="flex flex-col gap-1 mb-2">
+          <span className="text-zinc-500 text-sm pl-1">Loading suggestions…</span>
+          <div className="flex flex-wrap gap-2">
+            {[...Array(3)].map((_, i) => (
+              <div
+                key={i}
+                className="h-8 w-40 bg-zinc-200 dark:bg-zinc-700 rounded-full animate-pulse"
+              />
+            ))}
+          </div>
+        </div>
+      )}
       {suggestions.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {suggestions.map((s, i) => (

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Streaming Agent Demo</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        #output { white-space: pre-wrap; background: #f4f4f4; padding: 1em; border-radius: 5px; margin-top: 1em; }
+        .main { color: #222; }
+        .summary { color: #0074d9; }
+        .suggestions { color: #2ecc40; }
+    </style>
+</head>
+<body>
+    <h1>Streaming Agent Demo</h1>
+    <form id="promptForm">
+        <input type="text" id="prompt" placeholder="Enter your prompt" size="50" required>
+        <button type="submit">Send</button>
+    </form>
+    <div id="output"></div>
+    <script>
+        const form = document.getElementById('promptForm');
+        const output = document.getElementById('output');
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            output.textContent = '';
+            const prompt = document.getElementById('prompt').value;
+            const response = await fetch('/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt })
+            });
+            if (!response.body) {
+                output.textContent = 'No stream received.';
+                return;
+            }
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                let lines = buffer.split('\n');
+                buffer = lines.pop(); // last may be incomplete
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const event = JSON.parse(line);
+                        let html = '';
+                        if (event.type === 'main') {
+                            html = `<div class="main"><b>Main:</b> ${event.content}</div>`;
+                        } else if (event.type === 'summary') {
+                            html = `<div class="summary"><b>Summary:</b> ${event.content}</div>`;
+                        } else if (event.type === 'suggestions') {
+                            html = `<div class="suggestions"><b>Suggestions:</b> ${event.content}</div>`;
+                        }
+                        output.innerHTML += html;
+                    } catch (err) {
+                        output.innerHTML += `<div style='color:red'>Error parsing: ${line}</div>`;
+                    }
+                }
+            }
+        };
+    </script>
+</body>
+</html>

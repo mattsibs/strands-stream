@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+strands-agents
+openai
+python-dotenv

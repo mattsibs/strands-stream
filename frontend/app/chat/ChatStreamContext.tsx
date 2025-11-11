@@ -1,4 +1,5 @@
-import React, {createContext, useContext, useState, useRef, ReactNode} from "react";
+import React, {createContext, useContext, useState, useRef, useCallback, ReactNode} from "react";
+import { useHttpStream } from "./useHttpStream";
 
 export type ChatMessage = {
     id: string;
@@ -27,14 +28,101 @@ export const useChatStream = () => {
 export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-    const [loading, setLoading] = useState(false);
-    const abortRef = useRef<AbortController | null>(null);
+    const assistantMsgIdRef = useRef<string | null>(null);
+    const contentBufferRef = useRef<string>("");
+    const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
-    console.log("messages", messages)
-    const sendMessage = async (prompt: string) => {
-        // Cancel any ongoing stream
-        abortRef.current?.abort();
-        setLoading(true);
+    // Streaming callbacks
+    const handleChunk = useCallback((chunk: string) => {
+        let buffer = contentBufferRef.current + chunk;
+        let lines = buffer.split("\n");
+        contentBufferRef.current = lines.pop() || "";
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+                const data = JSON.parse(line);
+                if (data.type === "partial_response") {
+                    if (typeof data.value === "string" && assistantMsgIdRef.current) {
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantMsgIdRef.current
+                                    ? { ...msg, content: (msg.content || "") + data.value, partial: true }
+                                    : msg
+                            )
+                        );
+                    }
+                } else if (data.type === "response") {
+                    if (typeof data.value === "string" && assistantMsgIdRef.current) {
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantMsgIdRef.current
+                                    ? { ...msg, content: data.value, partial: false }
+                                    : msg
+                            )
+                        );
+                    }
+                } else if (data.type === "suggestions") {
+                    setSuggestions(data.value || []);
+                }
+            } catch (e) {
+                // Ignore JSON parse errors for incomplete lines
+            }
+        }
+    }, []);
+
+    const handleDone = useCallback(() => {
+        if (assistantMsgIdRef.current) {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === assistantMsgIdRef.current
+                        ? { ...msg, partial: false }
+                        : msg
+                )
+            );
+        }
+        contentBufferRef.current = "";
+        assistantMsgIdRef.current = null;
+    }, []);
+
+    const handleError = useCallback((err: Error) => {
+        if (assistantMsgIdRef.current) {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === assistantMsgIdRef.current
+                        ? { ...msg, content: `[Error: failed to fetch response]`, partial: false }
+                        : msg
+                )
+            );
+        }
+        contentBufferRef.current = "";
+        assistantMsgIdRef.current = null;
+    }, []);
+
+    // State to trigger streaming with a new prompt
+    const [streamPrompt, setStreamPrompt] = useState<string | null>(null);
+
+    // useHttpStream hook instance
+    const {
+        start: startStream,
+        abort: abortStream,
+        loading,
+    } = useHttpStream({
+        url: "/api/stream",
+        options: streamPrompt
+            ? {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: streamPrompt }),
+            }
+            : undefined,
+        onChunk: handleChunk,
+        onDone: handleDone,
+        onError: handleError,
+    });
+
+    // sendMessage implementation
+    const sendMessage = useCallback(async (prompt: string) => {
+        abortStream();
         setSuggestions([]);
         const userMsg: ChatMessage = {
             id: `${Date.now()}-user`,
@@ -42,95 +130,20 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
             content: prompt,
         };
         setMessages((prev) => [...prev, userMsg]);
-
-        const controller = new AbortController();
-        abortRef.current = controller;
-
-        let assistantMsg: ChatMessage = {
+        const assistantMsg: ChatMessage = {
             id: `${Date.now()}-assistant`,
             role: "assistant",
             content: "",
             partial: true,
         };
+        assistantMsgIdRef.current = assistantMsg.id;
+        contentBufferRef.current = "";
         setMessages((prev) => [...prev, assistantMsg]);
-
-        try {
-            const res = await fetch("/api/stream", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({prompt}),
-                signal: controller.signal,
-            });
-            if (!res.body) throw new Error("No response body");
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-            let done = false;
-            let newContent = "";
-            while (!done) {
-                const {value, done: doneReading} = await reader.read();
-                done = doneReading;
-                if (value) {
-                    buffer += decoder.decode(value, {stream: true});
-                    let lines = buffer.split("\n");
-                    buffer = lines.pop() || "";
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-                        console.log('[ChatStream] Received line:', line); // <-- LOG
-                        try {
-                            const data = JSON.parse(line);
-                            console.log('[ChatStream] Parsed data:', data); // <-- LOG
-                            if (data.type === "partial_response") {
-                                console.log("partial_response respopnse", data)
-
-                                if (typeof data.value === "string") {
-                                    newContent += data.value;
-                                    setMessages((prev) =>
-                                        prev.map((msg) =>
-                                            msg.id === assistantMsg.id
-                                                ? {...msg, content: newContent, partial: true}
-                                                : msg
-                                        )
-                                    );
-                                } else {
-                                    console.warn("[ChatStream] Missing or invalid value for partial_response", data);
-                                }
-                            } else if (data.type === "response") {
-                                console.log("full respopnse", data)
-if (typeof data.value === "string") {
-                                     setMessages((prev) =>
-                                         prev.map((msg) =>
-                                             msg.id === assistantMsg.id
-                                                 ? {...msg, content: data.value, partial: false}
-                                                 : msg
-                                         )
-                                     );
-                                 } else {
-                                     console.warn("[ChatStream] Missing or invalid value for response", data);
-                                 }
-                            } else if (data.type === "suggestions") {
-                                setSuggestions(data.value || []);
-                            }
-                        } catch (e) {
-                            console.warn('[ChatStream] JSON parse error:', e, line); // <-- LOG
-                            // Ignore JSON parse errors for incomplete lines
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            setMessages((prev) =>
-                prev.map((msg) =>
-                    msg.id === assistantMsg.id
-                        ? {...msg, content: "[Error: failed to fetch response]", partial: false}
-                        : msg
-                )
-            );
-        } finally {
-            setLoading(false);
-            abortRef.current = null;
-        }
-    };
+        setStreamPrompt(prompt);
+        setTimeout(() => {
+            startStream();
+        }, 0);
+    }, [abortStream, startStream]);
 
     return (
         <ChatStreamContext.Provider value={{messages, suggestions, sendMessage, loading}}>

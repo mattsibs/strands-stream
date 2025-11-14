@@ -1,0 +1,21 @@
+Ingress annotations on that path/host:
+
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header X-Accel-Buffering no;
+
+Port-forward directly to Next.js pod and curl:
+
+kubectl port-forward deploy/your-next 3001:3000
+curl -N http://localhost:3001/api/stream
+
+If this streams properly → Next.js is fine, ingress/LB is suspect.
+
+From inside the Next pod, curl the Python service:
+
+kubectl exec -it deploy/your-next -- sh
+curl -N http://python-service.default.svc.cluster.local:8000/stream

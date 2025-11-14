@@ -1,5 +1,5 @@
 import React, {createContext, useContext, useState, useRef, useCallback, ReactNode} from "react";
-import { useHttpStream } from "./useHttpStream";
+import {useHttpStream} from "./useHttpStream";
 
 export type ChatMessage = {
     id: string;
@@ -33,40 +33,34 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
     const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
     // Streaming callbacks
-    const handleChunk = useCallback((chunk: string) => {
-        let buffer = contentBufferRef.current + chunk;
-        let lines = buffer.split("\n");
-        contentBufferRef.current = lines.pop() || "";
-        for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-                const data = JSON.parse(line);
-                if (data.type === "partial_response") {
-                    if (typeof data.value === "string" && assistantMsgIdRef.current) {
-                        setMessages((prev) =>
-                            prev.map((msg) =>
-                                msg.id === assistantMsgIdRef.current
-                                    ? { ...msg, content: (msg.content || "") + data.value, partial: true }
-                                    : msg
-                            )
-                        );
-                    }
-                } else if (data.type === "response") {
-                    if (typeof data.value === "string" && assistantMsgIdRef.current) {
-                        setMessages((prev) =>
-                            prev.map((msg) =>
-                                msg.id === assistantMsgIdRef.current
-                                    ? { ...msg, content: data.value, partial: false }
-                                    : msg
-                            )
-                        );
-                    }
-                } else if (data.type === "suggestions") {
-                    setSuggestions(data.value || []);
+    const handleChunk = useCallback((line: string) => {
+        try {
+            const data = JSON.parse(line);
+            if (data.type === "partial_response") {
+                if (typeof data.value === "string" && assistantMsgIdRef.current) {
+                    setMessages((prev) =>
+                        prev.map((msg) =>
+                            msg.id === assistantMsgIdRef.current
+                                ? {...msg, content: (msg.content || "") + data.value, partial: true}
+                                : msg
+                        )
+                    );
                 }
-            } catch (e) {
-                // Ignore JSON parse errors for incomplete lines
+            } else if (data.type === "response") {
+                if (typeof data.value === "string" && assistantMsgIdRef.current) {
+                    setMessages((prev) =>
+                        prev.map((msg) =>
+                            msg.id === assistantMsgIdRef.current
+                                ? {...msg, content: data.value, partial: false}
+                                : msg
+                        )
+                    );
+                }
+            } else if (data.type === "suggestions") {
+                setSuggestions(data.value || []);
             }
+        } catch (e) {
+            // Ignore JSON parse errors for incomplete lines
         }
     }, []);
 
@@ -75,7 +69,7 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
             setMessages((prev) =>
                 prev.map((msg) =>
                     msg.id === assistantMsgIdRef.current
-                        ? { ...msg, partial: false }
+                        ? {...msg, partial: false}
                         : msg
                 )
             );
@@ -89,7 +83,7 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
             setMessages((prev) =>
                 prev.map((msg) =>
                     msg.id === assistantMsgIdRef.current
-                        ? { ...msg, content: `[Error: failed to fetch response]`, partial: false }
+                        ? {...msg, content: `[Error: failed to fetch response]`, partial: false}
                         : msg
                 )
             );
@@ -108,13 +102,11 @@ export const ChatStreamProvider = ({children}: { children: ReactNode }) => {
         loading,
     } = useHttpStream({
         url: "/api/stream",
-        options: streamPrompt
-            ? {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: streamPrompt }),
-            }
-            : undefined,
+        options: {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({prompt: streamPrompt}),
+        },
         onChunk: handleChunk,
         onDone: handleDone,
         onError: handleError,
